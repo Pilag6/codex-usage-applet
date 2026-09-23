@@ -29,6 +29,7 @@ class CodexUsageApplet extends Applet.TextIconApplet {
         this._path = metadata.path;
         this._disposed = false;
         this._timer = 0;
+        this._deadlineTimer = 0;
         this._process = null;
         this._data = null;
         this._failed = false;
@@ -114,6 +115,25 @@ class CodexUsageApplet extends Applet.TextIconApplet {
         return !this._failed && item && !item.stale && Number.isFinite(item.used_percent) && now < item.resets_at && now - limits.observed_at <= this.staleSeconds;
     }
 
+    _scheduleResetDeadline() {
+        if (this._deadlineTimer) Mainloop.source_remove(this._deadlineTimer);
+        this._deadlineTimer = 0;
+        if (this._disposed || !this._data || !this._data.limits) return;
+        const now = Date.now() / 1000;
+        const resets = ['primary', 'secondary']
+            .map(key => this._data.limits[key])
+            .filter(item => item && Number.isFinite(item.used_percent) && Number.isFinite(item.resets_at) && item.resets_at > now)
+            .map(item => item.resets_at);
+        if (!resets.length) return;
+        const delay = Math.max(1, Math.ceil((Math.min(...resets) - now) * 1000));
+        this._deadlineTimer = Mainloop.timeout_add(delay, () => {
+            this._deadlineTimer = 0;
+            this._render();
+            this._refresh();
+            return false;
+        });
+    }
+
     _row(label, value, style = '') {
         const item = new PopupMenu.PopupBaseMenuItem({reactive: false});
         const box = new St.BoxLayout({style_class: 'codex-row'});
@@ -124,7 +144,7 @@ class CodexUsageApplet extends Applet.TextIconApplet {
     }
 
     _limit(label, value, limits) {
-        if (!value || !Number.isFinite(value.used_percent)) value = null;
+        if (!value || !Number.isFinite(value.used_percent) || !Number.isFinite(value.resets_at) || Date.now() / 1000 >= value.resets_at) value = null;
         const fresh = this._fresh(value, limits);
         this._row(label, value ? `${Math.round(value.used_percent)}% used${fresh ? '' : ' · stale'}` : 'Unavailable');
         if (!value) return;
@@ -138,6 +158,7 @@ class CodexUsageApplet extends Applet.TextIconApplet {
 
     _render() {
         if (this._disposed) return;
+        this._scheduleResetDeadline();
         this._section.removeAll();
         this._row('CODEX USAGE', undefined, 'codex-section');
         const data = this._data;
@@ -147,7 +168,7 @@ class CodexUsageApplet extends Applet.TextIconApplet {
             this.set_applet_label(`${compact(total)}${this._failed && Number.isFinite(total) ? '*' : ''} today`);
             this.set_applet_tooltip('Local Codex daily tokens · * = cached statistics; refresh failed · — = unavailable');
         } else {
-            const percentage = value => value && Number.isFinite(value.used_percent)
+            const percentage = value => value && Number.isFinite(value.used_percent) && Number.isFinite(value.resets_at) && Date.now() / 1000 < value.resets_at
                 ? `${Math.round(value.used_percent)}%${this._fresh(value, limits) ? '' : '*'}` : '—';
             this.set_applet_label(`5h ${percentage(limits.primary)} · W ${percentage(limits.secondary)}`);
             this.set_applet_tooltip('Codex limit percentages USED · * = last observed value, outdated or refresh failed · — = unavailable');
@@ -181,7 +202,9 @@ class CodexUsageApplet extends Applet.TextIconApplet {
     on_applet_removed_from_panel() {
         this._disposed = true;
         if (this._timer) Mainloop.source_remove(this._timer);
+        if (this._deadlineTimer) Mainloop.source_remove(this._deadlineTimer);
         this._timer = 0;
+        this._deadlineTimer = 0;
         if (this._process) this._process.force_exit();
         this._process = null;
         if (this.settings) this.settings.finalize();

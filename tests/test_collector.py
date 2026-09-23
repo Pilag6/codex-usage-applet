@@ -92,6 +92,36 @@ class CollectorTests(unittest.TestCase):
         self.assertTrue(self.c.result(self.now+301)['limits']['primary']['stale'])
         self.assertTrue(self.c.result(self.now+3601, stale_seconds=99999)['limits']['primary']['stale'])
 
+    def test_live_limits_allowlists_and_validates_response(self):
+        response = {'id': 2, 'result': {'rateLimits': {
+            'limitId': 'codex', 'accountId': 'SECRET_ACCOUNT', 'credits': {'balance': 99},
+            'primary': {'usedPercent': 12.5, 'windowDurationMins': 300, 'resetsAt': self.now+60, 'secret': 'AUTH_DATA'},
+            'secondary': {'usedPercent': 44, 'windowDurationMins': 10080, 'resetsAt': self.now+120},
+        }}}
+        parsed = m.live_limits(response, self.now)
+        self.assertEqual(parsed, {
+            'observed_at': self.now,
+            'primary': {'used_percent': 12.5, 'resets_at': self.now+60, 'window_minutes': 300},
+            'secondary': {'used_percent': 44, 'resets_at': self.now+120, 'window_minutes': 10080},
+        })
+        self.assertNotIn('SECRET', json.dumps(parsed))
+        response['result']['rateLimits']['primary']['usedPercent'] = 101
+        response['result']['rateLimits']['secondary']['windowDurationMins'] = 300
+        self.assertIsNone(m.live_limits(response, self.now))
+        self.assertIsNone(m.live_limits({'id': 2, 'error': {'message': 'private'}}, self.now))
+
+    def test_successful_live_limits_replace_jsonl_observation(self):
+        self.snapshot(100)
+        self.c.scan()
+        live = {'observed_at': self.now+10,
+                'primary': {'used_percent': 7, 'resets_at': self.now+1000, 'window_minutes': 300},
+                'secondary': {'used_percent': 8, 'resets_at': self.now+2000, 'window_minutes': 10080}}
+        self.assertTrue(m.refresh_live_limits(self.c, lambda: live))
+        result = self.c.result(self.now+10)
+        self.assertEqual(result['limits']['observed_at'], self.now+10)
+        self.assertEqual(result['limits']['primary']['used_percent'], 7)
+        self.assertEqual(result['today']['total_tokens'], 110)
+
     def test_schema_change_ignored(self):
         self.emit('event_msg', {'type': 'token_count', 'info': [], 'rate_limits': {'primary': {'used_percent': 'bad'}}})
         self.emit('turn_context', {'model': 'private/path', 'effort': 'high'})

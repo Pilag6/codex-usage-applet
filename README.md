@@ -4,14 +4,14 @@
 
 # Codex Usage for Cinnamon
 
-**A private, offline panel applet that shows your Codex token usage and account rate limits in real time.**
+**A private, local panel applet that shows your Codex token usage and current account rate limits.**
 
-*Built for Linux Mint / Cinnamon. No network requests. No credentials. No dependencies to install.*
+*Built for Linux Mint / Cinnamon. Codex handles its own authenticated limit request. No credentials are read or stored by the applet.*
 
 ![Cinnamon 6.6](https://img.shields.io/badge/Cinnamon-6.6-8B4513)
 ![Python 3](https://img.shields.io/badge/Python-3.x-3776AB)
 ![Node tests](https://img.shields.io/badge/tests-unittest%20%2B%20node-2E8B57)
-![Offline](https://img.shields.io/badge/network-offline-brightgreen)
+![Privacy](https://img.shields.io/badge/data-local-brightgreen)
 ![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
 ![Version](https://img.shields.io/badge/version-1.0.0-informational)
 
@@ -25,7 +25,7 @@ OpenAI Codex does not ship a Linux desktop indicator, and the CLI has no offline
 
 - **Always visible** — rate-limit percentages or today's token count, right in the panel.
 - **Detail on click** — a popup with limit progress bars, today/week/month totals, sessions, cache share, and the last observed model.
-- **Fully offline** — Python's standard library parses local JSONL files. Nothing ever leaves your machine; no OpenAI account, token, or auth file is read.
+- **Private by design** — local JSONL provides token totals, while the installed Codex app-server provides current limits through its authenticated local protocol. The applet never reads or stores credentials, account IDs, or credit details.
 - **Fast by design** — incremental reads with a private SQLite cache; unchanged history is never reparsed. Parsing runs in an async child process, so the panel never freezes.
 - **Safe installer** — a plain symlink, idempotent, no `sudo`, and it refuses to overwrite another installation.
 - **Zero dependencies** — Python 3 is the only runtime requirement; Node is used only for developer tests.
@@ -37,6 +37,7 @@ OpenAI Codex does not ship a Linux desktop indicator, and the CLI has no offline
 | Cinnamon desktop | Tested on Linux Mint 22.3 / Cinnamon 6.6 |
 | Python 3 | Standard library only, invoked as `python3` |
 | Codex session logs | `~/.codex/sessions/**/*.jsonl` (written by the Codex CLI) |
+| Codex CLI | Current account limits require `codex app-server`; JSONL snapshots are used if it is unavailable |
 | Node.js | *Optional* — only for the JS unit tests |
 
 ## Installation
@@ -94,11 +95,11 @@ The popup always shows **both** limits and token statistics, regardless of the p
 
 | Mode | Example | Meaning |
 |---|---|---|
-| Rate limits *(default)* | `Codex 5h 73% · W 41%` | Percentage **used** of the 5-hour and weekly windows |
-| Rate limits (stale) | `Codex 5h 73%* · W 41%*` | Last observed value, outdated or refresh failed — see tooltip |
-| Rate limits (missing) | `Codex 5h — · W —` | Window unavailable in the last snapshot |
-| Daily tokens | `Codex 1.84M today` | Local token total for today |
-| Daily tokens (failed refresh) | `Codex 1.84M today*` | Cached statistics; the refresh did not succeed |
+| Rate limits *(default)* | `5h 73% · W 41%` | Percentage **used** of the 5-hour and weekly windows |
+| Rate limits (stale) | `5h 73%* · W 41%*` | Last observed, unexpired value is outdated or refresh failed |
+| Rate limits (missing/expired) | `5h — · W —` | Current value is unavailable; expired percentages are never shown as current |
+| Daily tokens | `1.84M today` | Local token total for today |
+| Daily tokens (failed refresh) | `1.84M today*` | Cached statistics; the refresh did not succeed |
 
 There is **no automatic fallback** between the two modes — you choose explicitly in settings.
 
@@ -111,13 +112,14 @@ There is **no automatic fallback** between the two modes — you choose explicit
 - **Last model / Last reasoning effort** — from the most recent `turn_context` record.
 - **Updated** — timestamp of the last successful collection.
 
-Values marked `stale` keep their observation time visible; the applet never fabricates a fresh `0%` when a reset window simply passes.
+Unexpired values marked `stale` keep their observation time visible. At a reset deadline the applet immediately hides the expired percentage and runs a refresh; it shows `—` until a current value is available rather than fabricating `0%`.
 
 ## How it works
 
 ```mermaid
 flowchart LR
     A["~/.codex/sessions/**/*.jsonl"] -->|read-only, incremental| B["collector.py<br/>(async child process)"]
+    G["codex app-server --stdio"] -->|allowlisted current limits| B
     B -->|hashes, offsets, counters| C[("Private SQLite cache<br/>~/.cache/codex-usage-applet/")]
     B -->|JSON on stdout| D["applet.js<br/>(Cinnamon UI thread)"]
     D --> E[Panel label]
@@ -126,8 +128,9 @@ flowchart LR
 
 1. `src/applet.js` schedules refreshes and launches `src/collector.py` via `Gio.Subprocess` — parsing never blocks the UI thread.
 2. The collector scans `~/.codex/sessions/` and `~/.codex/archived_sessions/` (when present), seeking each file to its cached byte offset so only new data is read.
-3. Deduplicated token events and latest limit/model snapshots are stored in a mode-`700` cache directory with a mode-`600` database.
-4. The collector prints a versioned JSON payload (`schema_version: 1`); the applet validates and renders it.
+3. On every run, the collector asks the authenticated local Codex app-server for current limits with a bounded timeout. If that fails, it silently keeps the latest JSONL snapshot.
+4. Deduplicated token events and allowlisted limit/model observations are stored in a mode-`700` cache directory with a mode-`600` database.
+5. The collector prints a versioned JSON payload (`schema_version: 1`); the applet validates and renders it.
 
 A second run without session changes reports `bytes_read: 0`.
 
@@ -142,7 +145,7 @@ Inspected local JSONL lines use a `timestamp`, optional `ordinal`, `type`, `payl
 | `turn_context` | Last observed model and reasoning effort. |
 | `session_meta` | Session identity, used internally only as a hash. |
 
-Codex configuration and authentication files are **not** read by the collector.
+Codex configuration and authentication files are **not** read by the collector. Authentication remains inside the Codex app-server process.
 
 ### Counting semantics
 
@@ -157,10 +160,12 @@ Codex configuration and authentication files are **not** read by the collector.
 
 Observed snapshots include `used_percent`, `window_minutes`, and `resets_at`: a **300-minute** primary window and a **10,080-minute** secondary window. The applet reports **percentage used**, not remaining.
 
-These are **account snapshots** copied from Codex's own logs — not limits recomputed from local token totals.
+These are **account snapshots** reported by Codex — not limits recomputed from local token totals.
 
-- The applet deliberately does **not** start an authenticated app-server, contact OpenAI, or wake the CLI to refresh account data.
-- Limits may therefore be unavailable or stale until Codex writes a new snapshot, and usage from other devices is not part of local token statistics.
+- Each collector run starts `codex app-server --stdio` briefly and requests `account/rateLimits/read`. Codex owns authentication and any network activity; the applet sends no credentials.
+- Only the primary/secondary percentage, window duration, reset timestamp, and observation time are retained. Account IDs, credits, auth data, and raw responses are discarded.
+- If Codex is missing, unauthenticated, times out, or returns an invalid response, the collector silently falls back to the latest JSONL snapshot. Expired fallback values display as unavailable.
+- Usage from other devices is reflected in current account limits when Codex reports it, but not in local token statistics.
 - Model-specific windows or unexpected durations are not presented as the standard account windows.
 
 ## Performance and privacy
@@ -170,7 +175,7 @@ These are **account snapshots** copied from Codex's own logs — not limits reco
 **Privacy by construction.**
 
 - Source files are opened **read-only**; nothing under `~/.codex` is modified or deleted.
-- The cache stores only hashed identifiers, byte offsets, token counters, timestamps, and allowlisted model/limit metadata.
+- The cache stores only hashed identifiers, byte offsets, token counters, timestamps, and allowlisted model/limit metadata. It never stores the raw app-server response.
 - File paths, prompts, responses, code, and credentials are **never** written to the cache or emitted as output.
 - Cache directory is `700`, database file is `600`.
 - On failure the collector prints only a generic error — exception details could leak paths or source content.

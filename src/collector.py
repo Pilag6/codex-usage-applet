@@ -8,7 +8,9 @@ import math
 import os
 from pathlib import Path
 import re
+import selectors
 import sqlite3
+import subprocess
 import time
 
 FIELDS = ('input_tokens', 'cached_input_tokens', 'cache_write_input_tokens', 'output_tokens', 'reasoning_output_tokens', 'total_tokens')
@@ -17,6 +19,8 @@ FIELDS = ('input_tokens', 'cached_input_tokens', 'cache_write_input_tokens', 'ou
 TYPE = re.compile(rb'^\s*\{\s*"timestamp"\s*:\s*"[^"\r\n]+"\s*,\s*(?:"ordinal"\s*:\s*\d+\s*,\s*)?"type"\s*:\s*"(session_meta|turn_context|token_usage_record|event_msg)"\s*,\s*"payload"\s*:')
 TOKEN = re.compile(rb'^\s*\{\s*"type"\s*:\s*"token_count"\s*[,}]')
 MAX_LINE = 16 * 1024 * 1024
+MAX_RPC_BUFFER = 1024 * 1024
+RPC_TIMEOUT = 4
 
 def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
@@ -52,6 +56,107 @@ def limits(value, observed):
         if percent is not None and percent <= 100 and reset is not None and item.get('window_minutes') == minutes:
             result[key] = {'used_percent': percent, 'resets_at': reset, 'window_minutes': minutes}
     return result if len(result) > 1 else None
+
+def live_limits(response, observed):
+    if not isinstance(response, dict) or response.get('id') != 2 or 'error' in response:
+        return None
+    result = response.get('result')
+    value = result.get('rateLimits') if isinstance(result, dict) else None
+    if not isinstance(value, dict) or value.get('limitId', 'codex') not in ('codex', None):
+        return None
+    parsed = {'observed_at': observed}
+    for key, minutes in (('primary', 300), ('secondary', 10080)):
+        item = value.get(key)
+        if not isinstance(item, dict):
+            continue
+        percent = number(item.get('usedPercent'))
+        reset = number(item.get('resetsAt'))
+        if percent is not None and percent <= 100 and reset is not None and item.get('windowDurationMins') == minutes:
+            parsed[key] = {'used_percent': percent, 'resets_at': reset, 'window_minutes': minutes}
+    return parsed if len(parsed) > 1 else None
+
+def rpc_response(process, request_id, deadline, pending=b''):
+    selector = selectors.DefaultSelector()
+    try:
+        selector.register(process.stdout, selectors.EVENT_READ)
+        while time.monotonic() < deadline:
+            while b'\n' in pending:
+                line, pending = pending.split(b'\n', 1)
+                try:
+                    message = json.loads(line)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+                if isinstance(message, dict) and message.get('id') == request_id:
+                    return message, pending
+            if len(pending) > MAX_RPC_BUFFER:
+                return None, b''
+            ready = selector.select(max(0, deadline - time.monotonic()))
+            if not ready:
+                break
+            chunk = os.read(process.stdout.fileno(), 65536)
+            if not chunk:
+                break
+            pending += chunk
+    except (OSError, ValueError):
+        pass
+    finally:
+        selector.close()
+    return None, b''
+
+def query_live_limits(timeout=RPC_TIMEOUT):
+    process = None
+    try:
+        process = subprocess.Popen(
+            ['codex', 'app-server', '--stdio'], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )
+        deadline = time.monotonic() + timeout
+        initialize = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {
+            'clientInfo': {'name': 'codex-usage-applet', 'version': '1.0.0'},
+            'capabilities': {'experimentalApi': True},
+        }}
+        process.stdin.write(json.dumps(initialize).encode() + b'\n')
+        process.stdin.flush()
+        response, pending = rpc_response(process, 1, deadline)
+        if not response or 'error' in response or 'result' not in response:
+            return None
+        messages = (
+            {'jsonrpc': '2.0', 'method': 'initialized', 'params': {}},
+            {'jsonrpc': '2.0', 'id': 2, 'method': 'account/rateLimits/read', 'params': {'excludeResetCreditDetails': True}},
+        )
+        process.stdin.write(b''.join(json.dumps(message).encode() + b'\n' for message in messages))
+        process.stdin.flush()
+        response, _ = rpc_response(process, 2, deadline, pending)
+        return live_limits(response, time.time())
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+        return None
+    finally:
+        if process is not None:
+            try:
+                process.stdin.close()
+            except (OSError, AttributeError):
+                pass
+            if process.poll() is None:
+                try:
+                    process.terminate()
+                    process.wait(timeout=0.5)
+                except (OSError, subprocess.TimeoutExpired):
+                    try:
+                        process.kill()
+                        process.wait(timeout=0.5)
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass
+
+def refresh_live_limits(collector, fetch=query_live_limits):
+    try:
+        value = fetch()
+        if not value:
+            return False
+        collector.observation('limits', value['observed_at'], value)
+        collector.db.commit()
+        return True
+    except (KeyError, TypeError, ValueError, OSError, sqlite3.Error):
+        return False
 
 class Collector:
     def __init__(self, home, cache):
@@ -223,6 +328,7 @@ def main():
     try:
         collector = Collector(args.codex_home, args.cache_dir)
         collector.scan()
+        refresh_live_limits(collector)
         print(json.dumps(collector.result(stale_seconds=max(60, args.stale_seconds))))
         collector.db.close()
     except (OSError, sqlite3.Error, ValueError):

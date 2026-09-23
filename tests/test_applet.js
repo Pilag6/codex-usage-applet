@@ -4,7 +4,8 @@ const vm = require('vm');
 const assert = require('assert');
 let processStarts = 0;
 const settingsSchema = JSON.parse(fs.readFileSync('src/settings-schema.json', 'utf8'));
-let callback, killed = false, timerRemoved = false, finalized = false;
+let callback, killed = false, finalized = false, nextTimer = 1;
+const timers = new Map(), removedTimers = new Set();
 class Actor {
     constructor(props = {}) { assert(!('can_focus' in props)); Object.assign(this, props); }
     add_actor() {}
@@ -58,7 +59,11 @@ const context = {
                 finalize() { finalized = true; }
             }}
         },
-        mainloop: {timeout_add_seconds() { return 1; }, source_remove() { timerRemoved = true; }},
+        mainloop: {
+            timeout_add_seconds(delay, fn) { const id = nextTimer++; timers.set(id, fn); return id; },
+            timeout_add(delay, fn) { const id = nextTimer++; timers.set(id, fn); return id; },
+            source_remove(id) { removedTimers.add(id); timers.delete(id); }
+        },
         gi: {
             St: {BoxLayout: Actor, Bin: Actor, Label: Actor, ScrollView: Actor, PolicyType: {NEVER: 0, AUTOMATIC: 1}, Align: {START: 0}},
             Gio: {Subprocess: {new() { processStarts++; return subprocess; }}, SubprocessFlags: {STDOUT_PIPE: 1, STDERR_SILENCE: 2}},
@@ -67,6 +72,8 @@ const context = {
     }, console
 };
 vm.createContext(context);
+context.mockNow = 1800000000000;
+vm.runInContext('Date.now = () => mockNow', context);
 vm.runInContext(fs.readFileSync('src/applet.js', 'utf8'), context);
 const applet = context.main({path: '/mock', uuid: 'codex-usage@pila'}, 0, 25, 1);
 assert.equal(applet.iconPath, '/mock/icons/openai-codex-logo-symbolic.png');
@@ -76,12 +83,24 @@ assert.equal(settingsSchema['display-mode'].type, 'combobox');
 assert.deepEqual(settingsSchema['display-mode'].options, {'Rate limits': 'limits', 'Daily tokens': 'tokens'});
 callback(subprocess, {});
 assert.equal(applet.label, '5h — · W —');
-const now = Date.now()/1000;
+const now = context.mockNow/1000;
 const limits = {observed_at: now, primary: {used_percent: 73, resets_at: now+3600}, secondary: {used_percent: 41, resets_at: now+3600}};
 applet._data.limits = limits;
 applet._render();
 assert.equal(applet.label, '5h 73% · W 41%');
 assert(applet.tooltip.includes('USED'));
+const deadlineTimer = applet._deadlineTimer;
+const startsBeforeReset = processStarts;
+context.mockNow = limits.primary.resets_at * 1000;
+assert.strictEqual(timers.get(deadlineTimer)(), false);
+assert.equal(applet.label, '5h — · W —');
+assert.equal(processStarts, startsBeforeReset + 1, 'Reset deadline must trigger a refresh');
+callback(subprocess, {});
+context.mockNow = now * 1000;
+applet._data.limits = limits;
+limits.primary.resets_at = now+3600;
+limits.secondary.resets_at = now+7200;
+applet._render();
 limits.primary.stale = true;
 applet._render();
 assert.equal(applet.label, '5h 73%* · W 41%');
@@ -89,7 +108,7 @@ assert(applet.tooltip.includes('last observed'));
 delete limits.primary.stale;
 limits.primary.resets_at = 0;
 applet._render();
-assert.equal(applet.label, '5h 73%* · W 41%');
+assert.equal(applet.label, '5h — · W 41%');
 limits.primary.resets_at = now+3600;
 limits.observed_at = now-301;
 applet._render();
@@ -122,8 +141,15 @@ applet._render();
 assert.equal(applet.label, '— today');
 applet.settings.change('display-mode', 'limits');
 assert.equal(applet.label, '5h — · W —');
+applet._data = data;
+applet._data.limits = limits;
+limits.primary.resets_at = now+3600;
+limits.secondary.resets_at = now+7200;
+applet._failed = false;
+applet._render();
+const finalDeadlineTimer = applet._deadlineTimer;
 applet._refresh();
 applet.on_applet_removed_from_panel();
-assert(killed && timerRemoved && finalized && applet.menu.destroyed);
+assert(killed && removedTimers.has(finalDeadlineTimer) && finalized && applet.menu.destroyed);
 callback(subprocess, {});
 console.log('Applet display settings, missing/stale/error states and lifecycle checks passed.');
