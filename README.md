@@ -1,76 +1,294 @@
+<div align="center">
+
+<img src="assets/openai-codex-logo.png" alt="Codex Usage" width="96">
+
 # Codex Usage for Cinnamon
 
-A native Cinnamon panel applet for Linux Mint 22.3 / Cinnamon 6.6. Python's standard library collects local statistics; Cinnamon only renders small JSON results. No network requests, credential access, dependencies to install, or GNOME Shell APIs.
+**A private, offline panel applet that shows your Codex token usage and account rate limits in real time.**
 
-## Install
+*Built for Linux Mint / Cinnamon. No network requests. No credentials. No dependencies to install.*
 
-From this checkout (commands work from fish too):
+![Cinnamon 6.6](https://img.shields.io/badge/Cinnamon-6.6-8B4513)
+![Python 3](https://img.shields.io/badge/Python-3.x-3776AB)
+![Node tests](https://img.shields.io/badge/tests-unittest%20%2B%20node-2E8B57)
+![Offline](https://img.shields.io/badge/network-offline-brightgreen)
+![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
+![Version](https://img.shields.io/badge/version-1.0.0-informational)
+
+</div>
+
+---
+
+## Why this applet
+
+OpenAI Codex does not ship a Linux desktop indicator, and the CLI has no offline `/status` command. This applet fills that gap by reading the session logs Codex already writes on your machine and rendering them in the Cinnamon panel.
+
+- **Always visible** — rate-limit percentages or today's token count, right in the panel.
+- **Detail on click** — a popup with limit progress bars, today/week/month totals, sessions, cache share, and the last observed model.
+- **Fully offline** — Python's standard library parses local JSONL files. Nothing ever leaves your machine; no OpenAI account, token, or auth file is read.
+- **Fast by design** — incremental reads with a private SQLite cache; unchanged history is never reparsed. Parsing runs in an async child process, so the panel never freezes.
+- **Safe installer** — a plain symlink, idempotent, no `sudo`, and it refuses to overwrite another installation.
+- **Zero dependencies** — Python 3 is the only runtime requirement; Node is used only for developer tests.
+
+## Requirements
+
+| Requirement | Notes |
+|---|---|
+| Cinnamon desktop | Tested on Linux Mint 22.3 / Cinnamon 6.6 |
+| Python 3 | Standard library only, invoked as `python3` |
+| Codex session logs | `~/.codex/sessions/**/*.jsonl` (written by the Codex CLI) |
+| Node.js | *Optional* — only for the JS unit tests |
+
+## Installation
+
+Clone the repository and run the installer from the checkout:
 
 ```sh
+git clone https://github.com/Pilag6/codex-usage-applet.git
+cd codex-usage-applet
 ./install.sh
 ```
 
-This creates a development symlink from `~/.local/share/cinnamon/applets/codex-usage@pila` to this checkout's `src` directory. Keep the checkout in place. The installer is idempotent and refuses to overwrite any other installation. No sudo is needed.
+The installer creates a development symlink:
 
-Right-click a Cinnamon panel → **Applets** → find **Codex Usage** → select it and press **+**. Right-click the applet → **Configure** to choose **Panel display** → **Rate limits** (default) or **Daily tokens**, change refresh interval (default 45 seconds), or snapshot freshness (default 5 minutes). Switching panel display applies immediately without running the collector again; the popup always shows both limits and token statistics. Source changes are immediately available through the symlink, but loaded JavaScript requires removing/re-adding the applet or restarting Cinnamon. On X11: Alt+F2, `r`, Enter; on Wayland log out and back in.
+```text
+~/.local/share/cinnamon/applets/codex-usage@pila  →  <checkout>/src
+```
 
-To reinstall, run `./install.sh` again. To uninstall, first remove the applet from the panel, then run `./uninstall.sh`. Only this checkout's symlink is removed; cache and preferences remain.
+Keep the checkout in place. The script is idempotent (safe to re-run) and exits with an error rather than overwriting any other installation. Works from bash and fish alike.
 
-## Data sources and semantics
+### Add it to the panel
 
-Inspected local JSONL files use a `timestamp`, optional `ordinal`, `type`, `payload` envelope and contain:
+1. Right-click the Cinnamon panel → **Applets**.
+2. Find **Codex Usage** under *Installed applets*.
+3. Select it and press **+**.
+4. Right-click the applet icon → **Configure** to adjust settings.
 
-- `token_usage_record`: per-response `usage`, cumulative thread/turn usage, response/thread identifiers. Unique response IDs deduplicate repeated events, copied sessions and inherited response history.
-- `event_msg` / `token_count`: cumulative `info.total_token_usage`, last usage, and observed `rate_limits`. Both record types share a cumulative baseline; snapshots are differenced rather than summed, avoiding duplicates and supporting format transitions.
-- `turn_context`: last observed model and reasoning effort.
-- `session_meta`: session identity, used internally only as a hash.
+### Uninstall
 
-Both `~/.codex/sessions/**/*.jsonl` and `~/.codex/archived_sessions/**/*.jsonl` are scanned when present. The latter was absent on the inspected machine. Codex configuration and authentication are not needed at runtime and are not read by the collector.
+Remove the applet from the panel first, then run:
 
-**Total = input + output.** Cached input is a subset of input; reasoning output is a subset of output. They must not be added to total again. Cache share is cached input / input. Sessions means distinct threads with token activity during the selected period, including agent threads, not the number of JSONL files or CLI invocations.
+```sh
+./uninstall.sh
+```
 
-Daily, weekly and monthly totals use the computer's local calendar; weeks start Monday. Usage is attributed to the timestamp of the reported response/snapshot, not the start of a session. The latest observed model/effort is not necessarily the model of another concurrently active session.
+Only this checkout's symlink is removed; your cache and preferences are kept.
+
+## Configuration
+
+Right-click the applet → **Configure**:
+
+| Setting | Default | Range / options | Description |
+|---|---|---|---|
+| **Panel display** | Rate limits | `Rate limits`, `Daily tokens` | What the panel label shows. Applies immediately, without re-running the collector. |
+| **Refresh interval** | 45 s | 30 – 3600 s | How often the collector runs. |
+| **Mark limit snapshots stale after** | 300 s | 60 – 3600 s | Age after which limit values are flagged as stale. |
+
+The popup always shows **both** limits and token statistics, regardless of the panel display mode.
+
+> **Note on reloading:** Python changes are picked up through the symlink on the next refresh. Loaded JavaScript (and styles) are cached by Cinnamon — after editing `src/applet.js` or `src/stylesheet.css`, remove and re-add the applet, or restart Cinnamon (X11: `Alt+F2` → `r` → `Enter`; Wayland: log out and back in).
+
+## What you see
+
+### Panel
+
+| Mode | Example | Meaning |
+|---|---|---|
+| Rate limits *(default)* | `Codex 5h 73% · W 41%` | Percentage **used** of the 5-hour and weekly windows |
+| Rate limits (stale) | `Codex 5h 73%* · W 41%*` | Last observed value, outdated or refresh failed — see tooltip |
+| Rate limits (missing) | `Codex 5h — · W —` | Window unavailable in the last snapshot |
+| Daily tokens | `Codex 1.84M today` | Local token total for today |
+| Daily tokens (failed refresh) | `Codex 1.84M today*` | Cached statistics; the refresh did not succeed |
+
+There is **no automatic fallback** between the two modes — you choose explicitly in settings.
+
+### Popup (click the icon)
+
+- **5-hour limit** and **weekly limit** — percentage used, a progress bar, and time until reset.
+- **Limits observed** — when those snapshots were recorded.
+- **Today** — input, cached input, output, reasoning output, total tokens, sessions, and cache share of input.
+- **This week / This month** — total tokens on the local calendar (weeks start Monday).
+- **Last model / Last reasoning effort** — from the most recent `turn_context` record.
+- **Updated** — timestamp of the last successful collection.
+
+Values marked `stale` keep their observation time visible; the applet never fabricates a fresh `0%` when a reset window simply passes.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A["~/.codex/sessions/**/*.jsonl"] -->|read-only, incremental| B["collector.py<br/>(async child process)"]
+    B -->|hashes, offsets, counters| C[("Private SQLite cache<br/>~/.cache/codex-usage-applet/")]
+    B -->|JSON on stdout| D["applet.js<br/>(Cinnamon UI thread)"]
+    D --> E[Panel label]
+    D --> F[Popup menu]
+```
+
+1. `src/applet.js` schedules refreshes and launches `src/collector.py` via `Gio.Subprocess` — parsing never blocks the UI thread.
+2. The collector scans `~/.codex/sessions/` and `~/.codex/archived_sessions/` (when present), seeking each file to its cached byte offset so only new data is read.
+3. Deduplicated token events and latest limit/model snapshots are stored in a mode-`700` cache directory with a mode-`600` database.
+4. The collector prints a versioned JSON payload (`schema_version: 1`); the applet validates and renders it.
+
+A second run without session changes reports `bytes_read: 0`.
+
+## Data sources
+
+Inspected local JSONL lines use a `timestamp`, optional `ordinal`, `type`, `payload` envelope:
+
+| Record type | Used for |
+|---|---|
+| `token_usage_record` | Per-response `usage`, cumulative thread/turn usage, response/thread IDs. Unique response IDs deduplicate repeated events, copied sessions, and inherited history. |
+| `event_msg` / `token_count` | Cumulative `info.total_token_usage`, last usage, and observed `rate_limits`. Both record types share a cumulative baseline; snapshots are differenced rather than summed. |
+| `turn_context` | Last observed model and reasoning effort. |
+| `session_meta` | Session identity, used internally only as a hash. |
+
+Codex configuration and authentication files are **not** read by the collector.
+
+### Counting semantics
+
+- **Total = input + output.** Cached input is a *subset* of input, and reasoning output is a *subset* of output — they are never added to the total again.
+- **Cache share** = cached input ÷ input.
+- **Sessions** = distinct threads with token activity in the selected period (including agent threads), not JSONL files or CLI invocations.
+- Daily/weekly/monthly totals use the computer's **local calendar**; weeks start **Monday**.
+- Usage is attributed to the timestamp of the reported response/snapshot, not the session start.
+- The latest model/effort may come from a different thread than one you are running concurrently.
 
 ### Account limits
 
-Observed snapshots include `used_percent`, `window_minutes`, and `resets_at`: 300-minute primary and 10,080-minute secondary windows on this machine. The applet reports **percentage USED**, not remaining. These are account snapshots, not limits calculated from local token totals.
+Observed snapshots include `used_percent`, `window_minutes`, and `resets_at`: a **300-minute** primary window and a **10,080-minute** secondary window. The applet reports **percentage used**, not remaining.
 
-The default panel always shows limits: `Codex 5h 73% · W 41%`. Outdated, expired, or cached-after-refresh-failure values remain visible with an asterisk per window, for example `Codex 5h 73%* · W 41%*`; the tooltip explains the marker. Unavailable windows show `—`. There is no automatic fallback to daily tokens. Select **Daily tokens** in the applet settings for `Codex 1.84M today`; a failed refresh marks cached tokens with `*` instead. The popup retains old limits explicitly marked **stale**, including their observation time. Passing a reset never fabricates a new 0% value. Model-specific windows or unexpected durations are not presented as the standard account windows.
+These are **account snapshots** copied from Codex's own logs — not limits recomputed from local token totals.
 
-The installed CLI exposes an app-server account-rate-limit protocol but no direct offline `/status` command. This applet deliberately does not start an authenticated app-server, contact OpenAI, or wake the CLI to refresh account data. Thus limits may be unavailable or stale until Codex writes a new snapshot, and usage on other devices is not included in local token statistics.
+- The applet deliberately does **not** start an authenticated app-server, contact OpenAI, or wake the CLI to refresh account data.
+- Limits may therefore be unavailable or stale until Codex writes a new snapshot, and usage from other devices is not part of local token statistics.
+- Model-specific windows or unexpected durations are not presented as the standard account windows.
 
 ## Performance and privacy
 
-The first run reads existing JSONL files. Later runs stat the session tree, reopen only changed files, and seek to cached byte offsets. A private SQLite database under `${XDG_CACHE_HOME:-~/.cache}/codex-usage-applet/` stores only hashed identifiers, offsets, token counters, timestamps and allowlisted model/limit metadata. The cache directory is mode 700 and the database 600. File paths, prompts, responses, code and credentials are never included in the cache or output.
+**Incremental parsing.** The first run reads existing JSONL files; later runs `stat` the session tree, reopen only changed files, and seek to cached byte offsets. Directory/stat work scales with file count; aggregate queries scale with usage events in the current month.
 
-Parsing runs in an asynchronous child process outside Cinnamon's UI thread. Unchanged history is not reparsed. Directory/stat work is proportional to file count; aggregate database queries are proportional to usage events in the current month. Source files are opened read-only, and no files under `~/.codex` are changed or removed.
+**Privacy by construction.**
 
-Incomplete trailing lines are deferred; malformed and unexpected records are skipped. Removed history stays in the statistical cache; cache deletion forces a rebuild from currently available files. A replaced/truncated file is replayed with event-ID deduplication. Snapshot-only legacy forks lack response IDs, so inherited snapshots can be ambiguous. Missing archived history cannot be reconstructed. This is a local estimate, not a billing ledger.
+- Source files are opened **read-only**; nothing under `~/.codex` is modified or deleted.
+- The cache stores only hashed identifiers, byte offsets, token counters, timestamps, and allowlisted model/limit metadata.
+- File paths, prompts, responses, code, and credentials are **never** written to the cache or emitted as output.
+- Cache directory is `700`, database file is `600`.
+- On failure the collector prints only a generic error — exception details could leak paths or source content.
 
-## Debug and test
+**Resilience.** Incomplete trailing lines are deferred; malformed and unexpected records are skipped. A truncated or replaced file is replayed with event-ID deduplication. Removed history remains in the statistical cache until you delete the cache to force a rebuild. Missing archived history cannot be reconstructed. This is a **local estimate, not a billing ledger**.
+
+## Standalone CLI
+
+The collector can be run outside Cinnamon; it prints statistical JSON only:
 
 ```sh
 ./scripts/codex-usage
-python3 -m unittest discover -s tests -v
-node --check src/applet.js
-node tests/test_applet.js
 ```
-
-The standalone command prints statistical JSON only. `bytes_read` should be zero on a second run without session changes. For isolated tests without touching the default cache:
 
 ```sh
+# Isolated cache — never touches your default cache
 ./scripts/codex-usage --cache-dir /tmp/codex-usage-check
+
+# Synthetic fixtures (for tests)
+./scripts/codex-usage --codex-home /path/to/fixtures --cache-dir /tmp/fixtures-cache
+
+# Custom staleness threshold
+./scripts/codex-usage --stale-seconds 120
 ```
 
-`--codex-home` supports synthetic fixtures. A cache is bound to one source directory; use a separate cache per source. Python 3 is required at runtime; Node is only used for developer syntax/mock tests. Synthetic tests never require actual conversations and never modify Codex files. Development validation also compared the collector against unique-response usage from actual local files, with exact totals; exercised the async subprocess under installed CJS; and checked installer idempotence and refusal to overwrite unrelated directories. Full visual validation requires adding the applet to the panel.
+A cache is bound to one source directory: use a separate `--cache-dir` per `--codex-home`.
 
-If Cinnamon reports an error: open **Looking Glass** using Alt+F2 → `lg` → **Log**, or inspect the current user journal with `journalctl --user -b`. Confirm the development symlink points to this checkout, `python3` runs, and the collector command succeeds. Remove/re-add the applet after JavaScript changes. Do not post your Codex session files or authentication data in bug reports; the collector intentionally emits only a generic error if cache access fails.
+<details>
+<summary>Example output (trimmed)</summary>
 
-## Layout
+```json
+{
+  "schema_version": 1,
+  "updated_at": 1790000000.0,
+  "available": true,
+  "warnings": 0,
+  "bytes_read": 0,
+  "today": {
+    "input_tokens": 1200000,
+    "cached_input_tokens": 900000,
+    "cache_write_input_tokens": 0,
+    "output_tokens": 640000,
+    "reasoning_output_tokens": 180000,
+    "total_tokens": 1840000,
+    "sessions": 7,
+    "cache_percent": 75.0
+  },
+  "week": { "total_tokens": 9200000, "sessions": 42, "cache_percent": 71.2 },
+  "month": { "total_tokens": 31000000, "sessions": 180, "cache_percent": 69.4 },
+  "limits": {
+    "observed_at": 1789999800.0,
+    "primary": { "used_percent": 73.0, "resets_at": 1790001000.0, "window_minutes": 300, "stale": false },
+    "secondary": { "used_percent": 41.0, "resets_at": 1790500000.0, "window_minutes": 10080, "stale": false }
+  },
+  "context": { "observed_at": 1789999500.0, "model": "gpt-5-codex", "effort": "medium" }
+}
+```
 
-- `src/applet.js`, `stylesheet.css`: native Cinnamon UI and async lifecycle.
-- `src/metadata.json`, `settings-schema.json`: Cinnamon installation/settings.
-- `src/collector.py`: incremental, read-only Python collector.
-- `scripts/codex-usage`: standalone collector entry point.
-- `install.sh`, `uninstall.sh`: non-destructive symlink management.
-- `tests/`: synthetic collector and mock UI tests.
+</details>
+
+## Development
+
+### Run the tests
+
+```sh
+python3 -m unittest discover -s tests -v   # collector unit tests
+node --check src/applet.js                 # applet syntax check
+node tests/test_applet.js                  # mock UI tests
+```
+
+Synthetic tests never require real conversations and never modify Codex files. Python 3 is required at runtime; Node is only used for these developer checks.
+
+### Debug
+
+If Cinnamon reports an error:
+
+1. Open **Looking Glass**: `Alt+F2` → `lg` → **Log**.
+2. Or inspect the user journal: `journalctl --user -b`.
+3. Confirm the development symlink points to this checkout, `python3` is on `PATH`, and `./scripts/codex-usage` succeeds.
+4. Remove/re-add the applet after JavaScript changes.
+
+<details>
+<summary>Validated during development</summary>
+
+- Collector totals matched unique-response usage from actual local files exactly.
+- Async subprocess exercised under the installed CJS loader.
+- Installer idempotence and refusal to overwrite unrelated directories.
+- Full visual validation requires adding the applet to the panel.
+
+</details>
+
+### Project layout
+
+```text
+codex-usage-applet/
+├── src/
+│   ├── applet.js            # Native Cinnamon UI and async lifecycle
+│   ├── collector.py         # Incremental, read-only Python collector
+│   ├── metadata.json        # Cinnamon applet manifest (uuid, version)
+│   ├── settings-schema.json # Settings exposed in Configure
+│   ├── stylesheet.css       # Panel and popup styling
+│   └── icons/               # Symbolic panel icon
+├── scripts/
+│   └── codex-usage          # Standalone collector entry point
+├── tests/
+│   ├── test_collector.py    # Python unit tests
+│   └── test_applet.js       # Node mock UI tests
+├── assets/                  # README artwork
+├── install.sh               # Non-destructive symlink install
+└── uninstall.sh             # Non-destructive symlink removal
+```
+
+## Reporting bugs
+
+Please include your Cinnamon version, the output of `./scripts/codex-usage` (which contains only statistics), and relevant log lines.
+
+> **Never post your Codex session files or authentication data in an issue.** The collector intentionally emits only a generic error if cache access fails — keep it that way when pasting output manually.
+
+## Disclaimer
+
+This is an independent, community project. It is not affiliated with, endorsed by, or supported by OpenAI. "Codex" and the Codex logo are trademarks of OpenAI.
