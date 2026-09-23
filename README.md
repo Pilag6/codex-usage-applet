@@ -17,6 +17,9 @@
 
 </div>
 
+<img width="2179" height="721" alt="Imagen de Codex 23 sept 2026, 03_31_09 p m" src="https://github.com/user-attachments/assets/4c1e7c71-f8a0-48a9-9c9c-f149581d6e5c" />
+
+
 ---
 
 ## Why this applet
