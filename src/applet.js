@@ -36,7 +36,10 @@ class CodexUsageApplet extends Applet.TextIconApplet {
         this.staleSeconds = 300;
         this.displayMode = 'limits';
         this.setAllowedLayout(Applet.AllowedLayout.HORIZONTAL);
-        this.set_applet_icon_symbolic_name('utilities-terminal');
+        this.set_applet_icon_path(GLib.build_filenamev([this._path, 'icons', 'openai-codex-logo-symbolic.png']));
+        this._applet_icon_box.add_style_class_name('codex-panel-icon');
+        this._applet_label.add_style_class_name('codex-panel-label');
+        this._setCompactIconSize();
         this.set_applet_label('Codex …');
         this.set_applet_tooltip('Local Codex usage · limit percentages used');
         this.menuManager = new PopupMenu.PopupMenuManager(this);
@@ -63,6 +66,20 @@ class CodexUsageApplet extends Applet.TextIconApplet {
             return true;
         });
         this._refresh();
+    }
+
+    _setCompactIconSize(panelSize = null) {
+        if (!this._applet_icon) return;
+        const size = panelSize || this.getPanelIconSize(St.IconType.FULLCOLOR);
+        this._applet_icon.set_icon_size(Math.max(14, Math.round(size * 0.8)));
+    }
+
+    on_panel_icon_size_changed(size) {
+        this._setCompactIconSize(size);
+    }
+
+    on_panel_height_changed() {
+        this._setCompactIconSize();
     }
 
     _refresh() {
@@ -100,8 +117,8 @@ class CodexUsageApplet extends Applet.TextIconApplet {
     _row(label, value, style = '') {
         const item = new PopupMenu.PopupBaseMenuItem({reactive: false});
         const box = new St.BoxLayout({style_class: 'codex-row'});
-        box.add_actor(new St.Label({text: label, x_expand: true, style_class: style}));
-        if (value !== undefined) box.add_actor(new St.Label({text: String(value)}));
+        box.add_actor(new St.Label({text: label, x_expand: true, style_class: `codex-popup-text ${style}`}));
+        if (value !== undefined) box.add_actor(new St.Label({text: String(value), style_class: 'codex-popup-text'}));
         item.addActor(box);
         this._section.addMenuItem(item);
     }

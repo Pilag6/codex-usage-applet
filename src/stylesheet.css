@@ -1,3 +1,12 @@
+.codex-panel-icon {
+  margin-right: 6px;
+}
+.codex-panel-label {
+  color: #f7f7f7;
+}
+.codex-popup-text {
+  color: #f7f7f7;
+}
 .codex-section {
   font-weight: bold;
   padding-top: 8px;
@@ -8,7 +17,7 @@
 }
 .codex-note {
   font-size: 0.9em;
-  color: #999999;
+  color: #c9cdd3;
 }
 .codex-track {
   background-color: rgba(127, 127, 127, 0.25);

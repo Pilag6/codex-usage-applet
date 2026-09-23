@@ -11,6 +11,7 @@ class Actor {
     set_child() {}
     set_policy() {}
     addActor() {}
+    add_style_class_name() {}
 }
 class Menu {
     addActor() {}
@@ -32,8 +33,12 @@ const context = {
         ui: {
             applet: {
                 TextIconApplet: class {
+                    constructor() {
+                        this._applet_icon_box = new Actor();
+                        this._applet_label = new Actor();
+                    }
                     setAllowedLayout() {}
-                    set_applet_icon_symbolic_name() {}
+                    set_applet_icon_path(value) { this.iconPath = value; }
                     set_applet_label(value) { this.label = value; }
                     set_applet_tooltip(value) { this.tooltip = value; }
                 }, AllowedLayout: {HORIZONTAL: 0}, AppletPopupMenu: Menu
@@ -64,6 +69,7 @@ const context = {
 vm.createContext(context);
 vm.runInContext(fs.readFileSync('src/applet.js', 'utf8'), context);
 const applet = context.main({path: '/mock', uuid: 'codex-usage@pila'}, 0, 25, 1);
+assert.equal(applet.iconPath, '/mock/icons/openai-codex-logo-symbolic.png');
 assert.equal(applet.label, 'Codex 5h — · W —');
 assert.equal(applet.displayMode, 'limits');
 assert.equal(settingsSchema['display-mode'].type, 'combobox');
