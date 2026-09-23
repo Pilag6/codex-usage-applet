@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/openai-codex-logo.png" alt="Codex Usage" width="96">
+<img src="src/icons/openai-codex-logo-symbolic.png" alt="Codex Usage" width="96">
 
 # Codex Usage for Cinnamon
 
