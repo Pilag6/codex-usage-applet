@@ -1,6 +1,10 @@
 <div align="center">
 
-<img src="src/icons/openai-codex-logo-symbolic.png" alt="Codex Usage" width="96">
+<p>
+  <img src="src/icons/openai-codex-logo-symbolic.png" alt="OpenAI Codex logo" width="96">
+  &nbsp;&nbsp;&nbsp;
+  <img src="assets/Cinnamon-logo.svg.webp" alt="Cinnamon logo" width="96">
+</p>
 
 # Codex Usage for Cinnamon
 
