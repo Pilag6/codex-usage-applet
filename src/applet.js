@@ -40,7 +40,7 @@ class CodexUsageApplet extends Applet.TextIconApplet {
         this._applet_icon_box.add_style_class_name('codex-panel-icon');
         this._applet_label.add_style_class_name('codex-panel-label');
         this._setCompactIconSize();
-        this.set_applet_label('Codex …');
+        this.set_applet_label('5h — · W —');
         this.set_applet_tooltip('Local Codex usage · limit percentages used');
         this.menuManager = new PopupMenu.PopupMenuManager(this);
         this.menu = new Applet.AppletPopupMenu(this, orientation);
@@ -144,12 +144,12 @@ class CodexUsageApplet extends Applet.TextIconApplet {
         const limits = data && data.limits || {};
         if (this.displayMode === 'tokens') {
             const total = data ? data.today.total_tokens : null;
-            this.set_applet_label(`Codex ${compact(total)}${this._failed && Number.isFinite(total) ? '*' : ''} today`);
+            this.set_applet_label(`${compact(total)}${this._failed && Number.isFinite(total) ? '*' : ''} today`);
             this.set_applet_tooltip('Local Codex daily tokens · * = cached statistics; refresh failed · — = unavailable');
         } else {
             const percentage = value => value && Number.isFinite(value.used_percent)
                 ? `${Math.round(value.used_percent)}%${this._fresh(value, limits) ? '' : '*'}` : '—';
-            this.set_applet_label(`Codex 5h ${percentage(limits.primary)} · W ${percentage(limits.secondary)}`);
+            this.set_applet_label(`5h ${percentage(limits.primary)} · W ${percentage(limits.secondary)}`);
             this.set_applet_tooltip('Codex limit percentages USED · * = last observed value, outdated or refresh failed · — = unavailable');
         }
         if (!data) {
